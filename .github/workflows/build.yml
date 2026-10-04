@@ -21,6 +21,23 @@ jobs:
           unzip -q -o "$ZIP" -d src_unpacked
           ls src_unpacked | head -30
 
+      - name: Patch FFmpeg 6 compatibility
+        working-directory: src_unpacked
+        run: |
+          python3 - << 'PYEOF'
+          p = 'src/llmui/video.cpp'
+          s = open(p, encoding='utf-8').read()
+          old = "static int writePacket(void* opaque, const uint8_t* src, int size) {"
+          new = ("#if LIBAVFORMAT_VERSION_MAJOR < 61\n"
+                 "static int writePacket(void* opaque, uint8_t* src, int size) {\n"
+                 "#else\n"
+                 "static int writePacket(void* opaque, const uint8_t* src, int size) {\n"
+                 "#endif")
+          assert old in s, 'pattern not found'
+          open(p, 'w', encoding='utf-8').write(s.replace(old, new, 1))
+          print('patched video.cpp')
+          PYEOF
+
       - name: Cache AUI deps
         uses: actions/cache@v4
         with:
