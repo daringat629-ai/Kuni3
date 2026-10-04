@@ -1,0 +1,78 @@
+name: Build from zip
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fetch repo
+        uses: actions/checkout@v4
+
+      - name: Unpack sources from zip
+        run: |
+          ZIP=$(find . -maxdepth 1 -name 'kuni-marin-integrated*.zip' -printf '%T@ %p\n' | sort -n | tail -1 | cut -d' ' -f2-)
+          echo "Using: $ZIP"
+          test -n "$ZIP"
+          mkdir -p src_unpacked
+          unzip -q -o "$ZIP" -d src_unpacked
+          ls src_unpacked | head -30
+
+      - name: Cache AUI deps
+        uses: actions/cache@v4
+        with:
+          path: ~/.aui
+          key: aui-boot-${{ hashFiles('src_unpacked/**/CMakeLists.txt') }}
+          restore-keys: aui-boot-
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config libglew-dev zlib1g-dev libssl-dev libcrypt-dev \
+            libcurl4-openssl-dev libgtk-4-dev libadwaita-1-dev libdbus-1-dev libfontconfig-dev \
+            ninja-build libpulse-dev gperf \
+            libavcodec-dev libavformat-dev libavutil-dev libswscale-dev
+
+      - name: Setup Clang 22
+        run: |
+          wget https://apt.llvm.org/llvm.sh
+          chmod +x llvm.sh
+          sudo ./llvm.sh 22 all
+          echo "CC=clang-22" >> $GITHUB_ENV
+          echo "CXX=clang++-22" >> $GITHUB_ENV
+
+      - name: Configure
+        working-directory: src_unpacked
+        run: cmake -G Ninja -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo -DAUI_INSTALL_RUNTIME_DEPENDENCIES=TRUE -DKUNI_USE_FFMPEG=ON
+
+      - name: Build
+        working-directory: src_unpacked
+        run: cmake --build build --config RelWithDebInfo
+
+      - name: Pack
+        working-directory: src_unpacked/build
+        run: |
+          cmake . -DAUI_APP_PACKAGING=AUI_PORTABLE_TGZ
+          cmake --build . --config RelWithDebInfo
+          cpack . -CRelWithDebInfo -B artifacts
+
+      - name: Upload Kuni
+        uses: actions/upload-artifact@v4
+        with:
+          name: kuni-linux
+          path: src_unpacked/build/artifacts/*.*
+
+      - name: Upload Marin world
+        uses: actions/upload-artifact@v4
+        with:
+          name: marin_world
+          path: src_unpacked/marin_world
+
+      - name: Upload prompts
+        uses: actions/upload-artifact@v4
+        with:
+          name: prompts
+          path: src_unpacked/prompts
